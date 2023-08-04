@@ -3,18 +3,21 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime
+from http import HTTPStatus
 from typing import Annotated, Any, TypedDict
+from unittest.mock import MagicMock
 
-from fastapi import Body, Depends, Query
+from fastapi import Body, Depends, HTTPException, Query
 from pydantic import BaseModel, root_validator
 
 from diracx.core.config import Config, ConfigSource
-from diracx.core.models import ScalarSearchOperator, SearchSpec, SortSpec
+from diracx.core.job_status import get_job_status, set_job_status, set_job_status_bulk
+from diracx.core.models import ScalarSearchOperator, SearchSpec, SortSpec, StatusModel
 from diracx.core.properties import JOB_ADMINISTRATOR, NORMAL_USER
 from diracx.core.utils import JobStatus
 
 from ..auth import UserInfo, has_properties, verify_dirac_token
-from ..dependencies import JobDB
+from ..dependencies import JobDB, JobLoggingDB
 from ..fastapi_classes import DiracxRouter
 
 MAX_PARAMETRIC_JOBS = 20
@@ -101,6 +104,7 @@ async def submit_bulk_jobs(
     # FIXME: Using mutliple doesn't work with swagger?
     job_definitions: Annotated[list[str], Body(example=EXAMPLE_JDLS["Simple JDL"])],
     job_db: JobDB,
+    job_logging_db: JobLoggingDB,
     user_info: Annotated[UserInfo, Depends(verify_dirac_token)],
 ) -> list[InsertedJob]:
     from DIRAC.Core.Utilities.ClassAd.ClassAdLight import ClassAd
@@ -131,7 +135,6 @@ async def submit_bulk_jobs(
     jobDesc = f"[{job_definitions[0]}]"
 
     # TODO: that needs to go in the legacy adapter
-    # # jobDesc is JDL for now
     # jobDesc = jobDesc.strip()
     # if jobDesc[0] != "[":
     #     jobDesc = f"[{jobDesc}"
@@ -192,14 +195,9 @@ async def submit_bulk_jobs(
             f'Job added to the JobDB", "{job_id} for {fixme_ownerDN}/{fixme_ownerGroup}'
         )
 
-        # TODO comment out for test just now
-        # self.jobLoggingDB.addLoggingRecord(
-        #     jobID,
-        #     result["Status"],
-        #     result["MinorStatus"],
-        #     date=result["TimeStamp"],
-        #     source="JobManager",
-        # )
+        await job_logging_db.insert_record(
+            int(job_id), initialStatus, initialMinorStatus, source="JobManager"
+        )
 
         jobIDList.append(job_id)
 
@@ -236,13 +234,34 @@ async def kill_single_job(job_id: int):
 
 
 @router.get("/{job_id}/status")
-async def get_single_job_status(job_id: int) -> JobStatus:
-    return JobStatus.Stalled
+async def get_single_job_status(job_id: int, job_db: JobDB) -> StatusModel:
+    return await get_job_status(job_id, job_db)
 
 
 @router.post("/{job_id}/status")
-async def set_single_job_status(job_id: int, status: JobStatus):
+# TODO: use statusModel here ?
+async def set_single_job_status(
+    job_id: int, status: StatusModel, job_db: JobDB, job_logging_db: JobLoggingDB
+):
+    try:
+        await set_job_status(job_id, status, job_db, job_logging_db, MagicMock())
+    except ValueError as e:
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail=str(e)) from e
     return f"Updating Job {job_id} to {status}"
+
+
+@router.post("/{job_id}/statuses")
+async def set_single_job_status_bulk(
+    job_id: int,
+    statuses: list[StatusModel],
+    job_db: JobDB,
+    job_logging_db: JobLoggingDB,
+):
+    try:
+        await set_job_status_bulk(job_id, statuses, job_db, job_logging_db, MagicMock())
+    except ValueError as e:
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail=str(e)) from e
+    return f"Updating Job {job_id} to {statuses}"  # TODO rework this (see current implementation)
 
 
 @router.post("/kill")
@@ -251,13 +270,29 @@ async def kill_bulk_jobs(job_ids: Annotated[list[int], Query()]):
 
 
 @router.get("/status")
-async def get_bulk_job_status(job_ids: Annotated[list[int], Query(max_items=10)]):
-    return [{"job_id": jid, "status": JobStatus.Running} for jid in job_ids]
+async def get_bulk_job_status(
+    job_ids: Annotated[list[int], Query(max_items=10)], job_db: JobDB
+) -> dict[int, JobStatus]:
+    return get_bulk_job_status(job_ids, job_db)
 
 
 @router.post("/status")
 async def set_status_bulk(job_update: list[JobStatusUpdate]) -> list[JobStatusReturn]:
     return [{"job_id": job.job_id, "status": job.status} for job in job_update]
+
+
+# @router.post("/statuses")
+# async def set_multiple_job_status_bulk(
+#     job_update: list[tuple[int, list[StatusModel]]],
+#     job_db: JobDB,
+#     job_logging_db: JobLoggingDB,
+# ):
+#     return await asyncio.gather(
+#         *(
+#             set_bulk_job_status(job_id, statuses, job_db, job_logging_db, MagicMock())
+#             for job_id, statuses in job_update
+#         )
+#     )
 
 
 EXAMPLE_SEARCHES = {

@@ -58,10 +58,16 @@ def create_app_inner(
     # Add the DBs to the application
     available_db_classes: set[type[BaseDB]] = set()
     for db_name, db_url in database_urls.items():
+        print(db_name, db_url)
+        print(
+            entrypoint
+            for entrypoint in select_from_extension(group="diracx.dbs", name=db_name)
+        )
         db_classes: list[type[BaseDB]] = [
             entry_point.load()
             for entry_point in select_from_extension(group="diracx.dbs", name=db_name)
         ]
+        print(db_classes)
         assert db_classes, f"Could not find {db_name=}"
         # The first DB is the highest priority one
         db = db_classes[0](db_url=db_url)

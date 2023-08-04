@@ -6,8 +6,8 @@ from enum import Enum
 
 
 class JobStatus(str, Enum):
-    Running = "Running"
-    Stalled = "Stalled"
+    STALLED = "Stalled"
+    RUNNING = "Running"
     Killed = "Killed"
     Failed = "Failed"
     RECEIVED = "RECEIVED"

@@ -1,3 +1,5 @@
+import json
+
 TEST_JDL = """
     Arguments = "jobDescription.xml -o LogLevel=INFO";
     Executable = "dirac-jobexec";
@@ -156,3 +158,35 @@ def test_insert_and_search(normal_user_client):
     )
     assert r.status_code == 200, r.json()
     assert r.json() == []
+
+
+def test_job_status(normal_user_client):
+    job_definitions = [TEST_PARAMETRIC_JDL]
+    r = normal_user_client.post("/jobs/", json=job_definitions)
+    assert r.status_code == 200, r.json()
+    assert len(r.json()) == 3  # Parameters.JOB_ID is 3
+
+    submitted_job_ids = sorted([job_dict["JobID"] for job_dict in r.json()])
+
+    r = normal_user_client.get("/jobs/status", json={"job_ids": submitted_job_ids})
+    assert r.status_code == 200, r.json()
+    assert len(r.json()) == 3  # Parameters.JOB_ID is 3
+    assert json.loads(r.json()) == {
+        "job_id": 1,
+        "status": "RECEIVED",
+        "minor_status": "RECEIVED",
+    }
+
+    r = normal_user_client.get("/jobs/status", json={"job_ids": submitted_job_ids})
+    assert r.status_code == 200, r.json()
+    assert len(r.json()) == 3  # Parameters.JOB_ID is 3
+    print(r.json())
+    raise AssertionError()
+
+    # r = normal_user_client.get("/jobs/search")
+
+    # listed_jobs = r.json()
+
+    # assert len(listed_jobs) == 3  # Parameters.JOB_ID is 3
+
+    # assert submitted_job_ids == sorted([job_dict["JobID"] for job_dict in listed_jobs])

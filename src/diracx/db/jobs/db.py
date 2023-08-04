@@ -1,16 +1,16 @@
 from __future__ import annotations
 
+import time
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import func, insert, select, update
+from sqlalchemy import delete, func, insert, select, update
 
 from diracx.core.exceptions import InvalidQueryError
 from diracx.core.utils import JobStatus
 
 from ..utils import BaseDB
-from .schema import Base as JobDBBase
-from .schema import InputData, JobJDLs, Jobs
+from .schema import InputData, JobDBBase, JobJDLs, JobLoggingDBBase, Jobs, LoggingInfo
 
 
 def apply_search_filters(table, stmt, search):
@@ -276,3 +276,244 @@ class JobDB(BaseDB):
             "MinorStatus": initial_minor_status,
             "TimeStamp": datetime.now(tz=timezone.utc),
         }
+
+    async def get_start_exec_time(self, job_id: int) -> datetime | None:
+        """
+        Get the start execution time of a job
+        raises: ValueError if no row was found for the jobID
+        """
+        stmt = select(Jobs.StartExecTime).where(Jobs.JobID == job_id)
+        result = await self.conn.execute(stmt)
+        return result.one()[0]
+
+    async def set_start_exec_time(self, job_id: int, start_time: datetime):
+        """
+        Set the start execution time of a job
+        :raises ValueError: if no row was updated, meaning JobID is not valid or the job already started
+        """
+        stmt = (
+            update(Jobs)
+            .where(Jobs.JobID == job_id)
+            .where(Jobs.StartExecTime.is_(None))
+            .values(StartExecTime=start_time, HeartBeatTime=start_time)
+        )
+        result = await self.conn.execute(stmt)
+
+        if result.rowcount == 0:
+            raise ValueError(f"No row updated for jobID: {job_id}")
+
+    async def get_end_exec_time(self, job_id: int) -> datetime | None:
+        """
+        Get the end execution time of a job
+        raises: NoResultFound if no row was found for the jobID
+        """
+        stmt = select(Jobs.EndExecTime).where(Jobs.JobID == job_id)
+        result = await self.conn.execute(stmt)
+        return result.one()[0]
+
+    async def set_end_exec_time(self, jobID: int, end_time: datetime):
+        """
+        Set the end execution time of a job
+        raises: ValueError if no row was updated, meaning JobID is not valid or the job already ended
+        """
+        stmt = (
+            update(Jobs)
+            .where(Jobs.JobID == jobID)
+            .where(Jobs.EndExecTime.is_(None))
+            .values(EndExecTime=end_time)
+        )
+        result = await self.conn.execute(stmt)
+
+        if result.rowcount == 0:
+            raise ValueError(f"No row updated for jobID: {jobID}")
+
+    async def get_heartbeat_time(self, job_id: int) -> datetime | None:
+        """Get the heartbeat time of a job"""
+        stmt = select(Jobs.HeartBeatTime).where(Jobs.JobID == job_id)
+        result = await self.conn.execute(stmt)
+        return result.one()[0]
+
+    async def set_heartbeat_time(self, job_id: int, timestamp: datetime):
+        """
+        Set the heartbeat time of a job
+        raises: ValueError if no row was updated, meaning JobID is not valid
+        """
+        stmt = update(Jobs).where(Jobs.JobID == job_id).values(HeartBeatTime=timestamp)
+        result = await self.conn.execute(stmt)
+
+        if result.rowcount == 0:
+            raise ValueError(f"No row updated for jobID: {job_id}")
+
+    async def get_job_status(self, job_id: int):
+        stmt = select(Jobs.Status, Jobs.MinorStatus, Jobs.ApplicationStatus).where(
+            Jobs.JobID == job_id
+        )
+        result = await self.conn.execute(stmt)
+        return result.one()
+
+    async def set_job_status(
+        self, job_id: int, job_status: JobStatus, minor_status: str, app_status: str
+    ):
+        stmt = (
+            update(Jobs)
+            .where(Jobs.JobID == job_id)
+            .values(
+                Status=job_status,
+                MinorStatus=minor_status,
+                ApplicationStatus=app_status,
+            )
+        )
+        result = await self.conn.execute(stmt)
+
+        if result.rowcount == 0:
+            raise ValueError(f"No row updated for jobID: {job_id}")
+
+
+MAGIC_EPOC_NUMBER = 1270000000
+
+
+class JobLoggingDB(BaseDB):
+    """Frontend for the JobLoggingDB. Provides the ability to store changes with timestamps"""
+
+    # This needs to be here for the BaseDB to create the engine
+    metadata = JobLoggingDBBase.metadata
+
+    async def insert_record(
+        self,
+        jobID: int,
+        status: str = "idem",
+        minorStatus: str = "idem",
+        applicationStatus: str = "idem",
+        date: datetime | None = None,
+        source: str = "Unknown",
+    ):
+        """
+        Add a new entry to the JobLoggingDB table. One, two or all the three status
+        components (status, minorStatus, applicationStatus) can be specified.
+        Optionally the time stamp of the status can
+        be provided in a form of a string in a format '%Y-%m-%d %H:%M:%S' or
+        as datetime.datetime object. If the time stamp is not provided the current
+        UTC time is used.
+        """
+
+        if not date:
+            date = datetime.utcnow()
+
+        seqnum_stmt = (
+            select(func.coalesce(func.max(LoggingInfo.SeqNum) + 1, 1))
+            .where(LoggingInfo.JobID == jobID)
+            .scalar_subquery()
+        )
+
+        epoc = (
+            time.mktime(date.timetuple())
+            + date.microsecond / 1000000.0
+            - MAGIC_EPOC_NUMBER
+        )
+
+        stmt = insert(LoggingInfo).values(
+            JobID=int(jobID),
+            SeqNum=seqnum_stmt,
+            Status=status,
+            MinorStatus=minorStatus,
+            ApplicationStatus=applicationStatus[:255],
+            StatusTime=date,
+            StatusTimeOrder=epoc,
+            StatusSource=source[:32],
+        )
+        await self.conn.execute(stmt)
+
+    async def get_records(self, job_id: int) -> list[tuple]:
+        """Returns a Status,MinorStatus,ApplicationStatus,StatusTime,StatusSource tuple
+        for each record found for job specified by its jobID in historical order
+        """
+
+        stmt = (
+            select(
+                LoggingInfo.Status,
+                LoggingInfo.MinorStatus,
+                LoggingInfo.ApplicationStatus,
+                LoggingInfo.StatusTime,
+                LoggingInfo.StatusSource,
+            )
+            .where(LoggingInfo.JobID == int(job_id))
+            .order_by(LoggingInfo.StatusTimeOrder, LoggingInfo.StatusTime)
+        )
+        rows = await self.conn.execute(stmt)
+
+        values = []
+        for (
+            status,
+            minor_status,
+            application_status,
+            status_time,
+            status_source,
+        ) in rows:
+            values.append(
+                [status, minor_status, application_status, status_time, status_source]
+            )
+
+        # assert rows == values # TODO: check if this assumption is correct
+
+        # If no value has been set for the application status in the first place,
+        # We put this status to unknown
+        res = []
+        if values:
+            if values[0][2] == "idem":
+                values[0][2] = "Unknown"
+
+            # We replace "idem" values by the value previously stated
+            for i in range(1, len(values)):
+                for j in range(3):
+                    if values[i][j] == "idem":
+                        values[i][j] = values[i - 1][j]
+
+            # And we replace arrays with tuples
+            for row in values:
+                res.append(tuple(row))
+
+        return res
+
+    async def delete_records(self, job_ids: list[int]):
+        """Delete logging records for given jobs"""
+
+        stmt = delete(LoggingInfo).where(LoggingInfo.JobID.in_(job_ids))
+        await self.conn.execute(stmt)
+
+    async def get_time_stamps(self, job_id: int) -> dict[str, str]:
+        """Get TimeStamps for job MajorState transitions
+        :return: a {State:timestamp} dictionary
+        """
+
+        stmt = (
+            select(LoggingInfo.Status, LoggingInfo.StatusTimeOrder)
+            .where(LoggingInfo.JobID == job_id)
+            .order_by(LoggingInfo.StatusTimeOrder.asc())
+        )
+        rows = await self.conn.execute(stmt)
+
+        result = {}
+        for event, etime in rows:
+            result[str(event)] = str(etime + MAGIC_EPOC_NUMBER)
+
+        return result
+
+    async def get_latest_time_stamp(self, job_id: int) -> datetime:
+        """
+        :raises: ValueError if no time stamp has been found (which is most probably due to a bad job_id value)
+        :return: a {jobID: timestamp} dictionary
+        """
+        # Get last date and time
+        stmt = (
+            select(LoggingInfo.StatusTime)
+            .where(LoggingInfo.JobID == job_id)
+            .order_by(LoggingInfo.StatusTimeOrder.desc())
+            .limit(1)
+        )
+        rows = await self.conn.execute(stmt)
+        row = rows.first()
+        # This can only happend when the jobID provided is not valid
+        if not row:
+            raise ValueError
+
+        return row[0]

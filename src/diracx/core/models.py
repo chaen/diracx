@@ -3,6 +3,8 @@ from __future__ import annotations
 from enum import Enum
 from typing import Literal, TypedDict
 
+from diracx.core.utils import JobStatus
+
 
 class ScalarSearchOperator(str, Enum):
     EQUAL = "eq"
@@ -33,6 +35,12 @@ class VectorSearchSpec(TypedDict):
     parameter: str
     operator: VectorSearchOperator
     values: list[str]
+
+
+class StatusModel(TypedDict):
+    status: JobStatus
+    minor_status: str
+    application_status: str
 
 
 SearchSpec = ScalarSearchSpec | VectorSearchSpec
