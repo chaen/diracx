@@ -33,7 +33,8 @@ jobs:
       statuses: write
     defaults:
       run:
-        shell: bash -l {0}
+        # We need extglob for REFERENCE_BRANCH substitution
+        shell: bash -l -O extglob {0}
     steps:
       - uses: actions/checkout@v3
         with:
@@ -61,10 +62,14 @@ jobs:
         run: |
           set -xeuo pipefail
           IFS=$'\n\t'
+          # Needed for the advanced patter matching used in REFERENCE_BRANCH
           PREV_VERSION=$(git describe --tags --abbrev=0)
-          REFERENCE_BRANCH=${GITHUB_REF#refs/heads/}
+          # In case of manual trigger,
+          # GITHUB_REF is of the form refs/heads/main -> we want main
+          # In case of PR it is of the form refs/pull/59/merge -> we want pull/59/merge
+          REFERENCE_BRANCH=${GITHUB_REF##refs*(/heads)/}
           echo "Making release notes for ${REFERENCE_BRANCH} since ${PREV_VERSION}"
-          (git log ${PREV_VERSION}...${REFERENCE_BRANCH} --oneline --) > release.notes.new
+          (git log ${PREV_VERSION}...${REFERENCE_BRANCH} --oneline --no-merges --) > release.notes.new
           cat release.notes.new
       - name: Create tag if required
         id: check-tag
@@ -106,8 +111,9 @@ jobs:
         run: |
           set -e
           export NEW_VERSION=${{ steps.check-tag.outputs.new-version }}
-          echo "Pushing tagged release notes to ${GITHUB_REF#refs/heads/}"
-          git push "origin" "${GITHUB_REF#refs/heads/}"
+          REFERENCE_BRANCH=${GITHUB_REF##refs*(/heads)/}
+          echo "Pushing tagged release notes to ${REFERENCE_BRANCH}"
+          git push "origin" "${REFERENCE_BRANCH}"
           echo "Making GitHub release for ${NEW_VERSION}"
           .github/workflows/make_release.py \
             --repo="${{ github.repository }}" \
