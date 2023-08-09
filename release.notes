@@ -1,2 +1,5 @@
+[v0.0.1a2]
+30ef985 Replace GITHUB_REF with GITHUB_SHA
+b1619af Automatic release CI
 [0.0.1a1]
 There was DIRAC... and a prototype
