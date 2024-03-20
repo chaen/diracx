@@ -678,14 +678,7 @@ def test_delete_bulk_jobs_invalid_job_ids(
     r = normal_user_client.delete("/api/jobs/", params={"job_ids": invalid_job_ids})
 
     # Assert
-    assert r.status_code == HTTPStatus.NOT_FOUND, r.json()
-    assert r.json() == {
-        "detail": {
-            "message": f"Failed to delete {len(invalid_job_ids)} jobs out of {len(invalid_job_ids)}",
-            "valid_job_ids": [],
-            "failed_job_ids": invalid_job_ids,
-        }
-    }
+    assert r.status_code == HTTPStatus.FORBIDDEN, r.json()
 
 
 def test_delete_bulk_jobs_mix_of_valid_and_invalid_job_ids(
@@ -698,14 +691,8 @@ def test_delete_bulk_jobs_mix_of_valid_and_invalid_job_ids(
     r = normal_user_client.delete("/api/jobs/", params={"job_ids": job_ids})
 
     # Assert
-    assert r.status_code == HTTPStatus.NOT_FOUND, r.json()
-    assert r.json() == {
-        "detail": {
-            "message": f"Failed to delete {len(invalid_job_ids)} jobs out of {len(job_ids)}",
-            "valid_job_ids": valid_job_ids,
-            "failed_job_ids": invalid_job_ids,
-        }
-    }
+    assert r.status_code == HTTPStatus.FORBIDDEN, r.json()
+
     for job_id in valid_job_ids:
         r = normal_user_client.get(f"/api/jobs/{job_id}/status")
         assert r.status_code == 200, r.json()
@@ -761,19 +748,15 @@ def test_kill_bulk_jobs_invalid_job_ids(
     r = normal_user_client.post("/api/jobs/kill", params={"job_ids": invalid_job_ids})
 
     # Assert
-    assert r.status_code == HTTPStatus.NOT_FOUND, r.json()
-    assert r.json() == {
-        "detail": {
-            "message": f"Failed to kill {len(invalid_job_ids)} jobs out of {len(invalid_job_ids)}",
-            "valid_job_ids": [],
-            "failed_job_ids": invalid_job_ids,
-        }
-    }
+    assert r.status_code == HTTPStatus.FORBIDDEN, r.json()
 
 
 def test_kill_bulk_jobs_mix_of_valid_and_invalid_job_ids(
     normal_user_client: TestClient, valid_job_ids: list[int], invalid_job_ids: list[int]
 ):
+    """
+    None of the job should end up being killed
+    """
     # Arrange
     job_ids = valid_job_ids + invalid_job_ids
 
@@ -781,14 +764,8 @@ def test_kill_bulk_jobs_mix_of_valid_and_invalid_job_ids(
     r = normal_user_client.post("/api/jobs/kill", params={"job_ids": job_ids})
 
     # Assert
-    assert r.status_code == HTTPStatus.NOT_FOUND, r.json()
-    assert r.json() == {
-        "detail": {
-            "message": f"Failed to kill {len(invalid_job_ids)} jobs out of {len(job_ids)}",
-            "valid_job_ids": valid_job_ids,
-            "failed_job_ids": invalid_job_ids,
-        }
-    }
+    assert r.status_code == HTTPStatus.FORBIDDEN, r.json()
+
     for valid_job_id in valid_job_ids:
         r = normal_user_client.get(f"/api/jobs/{valid_job_id}/status")
         assert r.status_code == 200, r.json()
@@ -827,7 +804,7 @@ def test_remove_bulk_jobs_valid_job_ids(
     assert r.status_code == 200, r.json()
     for job_id in valid_job_ids:
         r = normal_user_client.get(f"/api/jobs/{job_id}/status")
-        assert r.status_code == HTTPStatus.NOT_FOUND, r.json()
+        assert r.status_code == HTTPStatus.FORBIDDEN, r.json()
 
 
 # Test setting job properties
