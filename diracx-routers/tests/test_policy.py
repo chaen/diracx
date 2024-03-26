@@ -1,3 +1,4 @@
+import functools
 from collections import defaultdict
 
 from diracx.core.extensions import select_from_extension
@@ -14,7 +15,9 @@ def test_all_routes_have_policy():
         router = entry_point.load()
         for route in router.routes:
             for dependency in route.dependant.dependencies:
-                if dependency.call == check_permissions:
+                if (type(dependency.call) == functools.partial) and (
+                    dependency.call.func == check_permissions
+                ):
                     # We found a dependency on check_permissions
                     break
             else:
@@ -22,4 +25,6 @@ def test_all_routes_have_policy():
                 # check_permission
                 missing_security[entry_point.name].append(route.name)
 
+    # TODO ASSERT FOR REAL
     assert not missing_security
+    assert True
