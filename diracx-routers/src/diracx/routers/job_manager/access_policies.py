@@ -1,5 +1,5 @@
-import functools
-import os
+from __future__ import annotations
+
 from enum import StrEnum, auto
 from typing import Annotated, Callable
 
@@ -7,8 +7,9 @@ from fastapi import Depends, HTTPException, status
 
 from diracx.core.properties import JOB_ADMINISTRATOR, NORMAL_USER
 from diracx.db.sql import JobDB
+from diracx.routers.access_policies import BaseAccessPolicy
 
-from ..auth import AuthorizedUserInfo, verify_dirac_access_token
+from ..auth import AuthorizedUserInfo
 
 
 class ActionType(StrEnum):
@@ -71,36 +72,22 @@ async def default_wms_policy(
     raise HTTPException(status.HTTP_403_FORBIDDEN)
 
 
-def check_permissions(
-    user_info: Annotated[AuthorizedUserInfo, Depends(verify_dirac_access_token)],
-):
-
-    has_been_called = False
-
-    # TODO: query the CS to find the actual policy
-    policy = default_wms_policy
-
-    @functools.wraps(policy)
-    async def wrapped_policy(**kwargs):
-        """This wrapper is just to update the has_been_called flag"""
-        nonlocal has_been_called
-        has_been_called = True
-        return await policy(user_info, **kwargs)
-
-    try:
-        yield wrapped_policy
-    finally:
-        if not has_been_called:
-            # TODO nice error message with inspect
-            # That should really not happen
-            print(
-                "THIS SHOULD NOT HAPPEN, ALWAYS VERIFY PERMISSION",
-                "(PS: I hope you are in a CI)",
-                flush=True,
-            )
-            os._exit(1)
+class WMSAccessPolicy(BaseAccessPolicy):
+    # policy = staticmethod(policy_implementation)
+    @staticmethod
+    def policy(
+        user_info: AuthorizedUserInfo,
+        /,
+        *,
+        action: ActionType,
+        job_db: JobDB,
+        job_ids: list[int] | None = None,
+    ):
+        return default_wms_policy(
+            user_info, action=action, job_db=job_db, job_ids=job_ids
+        )
 
 
-CheckPermissionsCallable = Annotated[Callable, Depends(check_permissions)]
+CheckPermissionsCallable = Annotated[Callable, Depends(WMSAccessPolicy.check)]
 
 # router = DiracxRouter(dependencies=[has_properties(NORMAL_USER | JOB_ADMINISTRATOR)])

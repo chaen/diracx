@@ -27,6 +27,7 @@ from diracx.core.utils import dotenv_files_from_environment
 from diracx.db.exceptions import DBUnavailable
 from diracx.db.os.utils import BaseOSDB
 from diracx.db.sql.utils import BaseSQLDB
+from diracx.routers.access_policies import BaseAccessPolicy, check_permissions
 
 from .auth import verify_dirac_access_token
 from .fastapi_classes import DiracFastAPI, DiracxRouter
@@ -65,6 +66,35 @@ def create_app_inner(
 
     # Override the configuration source
     app.dependency_overrides[ConfigSource.create] = config_source.read_config
+
+    available_access_policy_names = set(
+        [
+            entry_point.name
+            for entry_point in select_from_extension(group="diracx.access_policies")
+        ]
+    )
+
+    for access_policy_name in available_access_policy_names:
+
+        access_policy_classes = BaseAccessPolicy.available_implementations(
+            access_policy_name
+        )
+
+        # The first AccessPolicy is the highest priority one
+        access_policy_used = access_policy_classes[0].policy
+
+        # app.lifetime_functions.append(access_policy.lifetime_function)
+        # Add overrides for all the AccessPolicy classes, including those from extensions
+        # This means vanilla DiracX routers get an instance of the extension's AccessPolicy
+        for access_policy_class in access_policy_classes:
+            assert access_policy_class.check not in app.dependency_overrides
+            app.dependency_overrides[access_policy_class.check] = partial(
+                check_permissions, access_policy_used
+            )
+
+    # app.dependency_overrides[WMSAccessPolicy.check] = functools.partial(
+    #     check_permissions, WMSAccessPolicy.policy
+    # )
 
     fail_startup = True
     # Add the SQL DBs to the application

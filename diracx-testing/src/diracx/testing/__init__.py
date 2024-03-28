@@ -144,6 +144,7 @@ class ClientFactory:
         from diracx.core.settings import ServiceSettingsBase
         from diracx.db.sql.utils import BaseSQLDB
         from diracx.routers import create_app_inner
+        from diracx.routers.access_policies import BaseAccessPolicy
 
         enabled_systems = {
             e.name for e in select_from_extension(group="diracx.services")
@@ -175,7 +176,8 @@ class ClientFactory:
         self.app.dependency_overrides = {}
         for obj in self.all_dependency_overrides:
             assert issubclass(
-                obj.__self__, (ServiceSettingsBase, BaseSQLDB, ConfigSource)
+                obj.__self__,
+                (ServiceSettingsBase, BaseSQLDB, ConfigSource, BaseAccessPolicy),
             ), obj
 
         self.all_lifetime_functions = self.app.lifetime_functions[:]
