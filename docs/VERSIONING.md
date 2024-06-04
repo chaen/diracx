@@ -92,5 +92,5 @@ See this diagram for an example of how this looks in practice:
 
 ## Extensions
 
-- Extensions will extend one or more of `diracx`, `diracx-routers`, `diracx-tasks` images (e.g. `mydiracx`, `mydiracx-routers`, `mydiracx-tasks`).
+- Extensions will extend one or more of `diracx`, `diracx-routers`, `diracx-tasks` images (e.g. `lhcbdiracx`, `lhcbdiracx-routers`, `lhcbdiracx-tasks`).
 - Extensions provide a corresponding container image based on a specific release of the corresponding DiracX image.
