@@ -20,7 +20,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
-from fastapi.routing import APIRoute
+from fastapi.routing import APIRoute, _IncludedRouter
 from packaging.version import InvalidVersion, parse
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -477,7 +477,12 @@ def find_dependents(
         # TODO: Support dependencies of the router itself
         # yield from find_dependents(obj.dependencies, cls)
         for route in obj.routes:
-            if isinstance(route, APIRoute):
+            if isinstance(route, _IncludedRouter):
+                # Since FastAPI 0.137.0, include_router() stores the included
+                # router instead of copying its routes, so we have to descend
+                # into the routes tree
+                yield from find_dependents(route.original_router, cls)
+            elif isinstance(route, APIRoute):
                 yield from find_dependents(route.dependant.dependencies, cls)
         return
 
