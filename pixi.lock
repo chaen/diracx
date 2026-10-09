@@ -25659,7 +25659,7 @@ packages:
   - diracx-db
   - diracx-logic
   - diracx-tasks
-  - fastapi>=0.121.0
+  - fastapi>=0.137.0
   - httpx2
   - joserfc
   - opentelemetry-api>=1.40.0
