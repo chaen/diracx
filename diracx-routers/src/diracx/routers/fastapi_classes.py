@@ -4,10 +4,11 @@ __all__ = ["DiracxRouter"]
 
 import asyncio
 import contextlib
-from typing import Any, Callable, TypeVar, cast
+from collections.abc import Iterator
+from typing import Any, Callable, TypeVar
 
 from fastapi import APIRouter, FastAPI
-from starlette.routing import Route
+from fastapi.routing import APIRoute, _IncludedRouter
 
 from diracx.tasks.plumbing.depends import auto_inject
 
@@ -34,6 +35,18 @@ def _downgrade_openapi_schema(data):
     if isinstance(data, list):
         for v in data:
             _downgrade_openapi_schema(v)
+
+
+def _iter_routers(router: APIRouter) -> Iterator[APIRouter]:
+    """Yield the router, then recursively the routers it includes.
+
+    FastAPI guarantees that a router cannot include itself, directly or
+    indirectly, so the recursion always terminates.
+    """
+    yield router
+    for route in router.routes:
+        if isinstance(route, _IncludedRouter):
+            yield from _iter_routers(route.original_router)
 
 
 class DiracFastAPI(FastAPI):
@@ -94,25 +107,32 @@ class DiracxRouter(APIRouter):
         self.diracx_path_root = path_root
 
     ####
-    # These 2 methods are needed to overwrite routes
+    # This method is needed to overwrite routes
     # https://github.com/tiangolo/fastapi/discussions/8489
 
     def add_api_route(self, path: str, endpoint: Callable[..., Any], **kwargs):
         endpoint = auto_inject(endpoint)
 
-        route_index = self._get_route_index_by_path_and_methods(
-            path, set(kwargs.get("methods", []))
-        )
-        if route_index >= 0:
-            self.routes.pop(route_index)
+        self._remove_overridden_route(path, set(kwargs.get("methods", [])))
 
         return super().add_api_route(path, endpoint, **kwargs)
 
-    def _get_route_index_by_path_and_methods(self, path: str, methods: set[str]) -> int:
-        routes = cast(list[Route], self.routes)
-        for index, route in enumerate(routes):
-            if route.path == path and methods == route.methods:
-                return index
-        return -1
+    def _remove_overridden_route(self, path: str, methods: set[str]) -> None:
+        """Remove the route overridden by the route being added.
+
+        The overridden route can belong to this router or to one of the
+        routers added with include_router(): since FastAPI 0.137.0,
+        include_router() stores the included router in router.routes
+        (behind an _IncludedRouter object) instead of copying its routes.
+        """
+        for router in _iter_routers(self):
+            for index, route in enumerate(router.routes):
+                if (
+                    isinstance(route, APIRoute)
+                    and route.path == path
+                    and route.methods == methods
+                ):
+                    router.routes.pop(index)
+                    return
 
     ######
