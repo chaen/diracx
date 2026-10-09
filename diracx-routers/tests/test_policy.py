@@ -33,7 +33,7 @@ def iter_auth_required_routes(router: DiracxRouter) -> Iterator[APIRoute]:
     Routers created with "require_auth=False" are skipped, as well as
     the routers they include.
     """
-    if not router.diracx_require_auth:
+    if not getattr(router, "diracx_require_auth", True):
         return
 
     for route in router.routes:
@@ -56,12 +56,7 @@ def test_all_routes_have_policy():
     for entry_point in select_from_extension(group=DiracEntryPoint.SERVICES):
         router: DiracxRouter = entry_point.load()
 
-        # If the router was created with the
-        # require_auth = False, skip it
-        if not router.diracx_require_auth:
-            continue
-
-        for route in router.routes:
+        for route in iter_auth_required_routes(router):
             # If the route is decorated with the diracx_open_access
             # decorator, we skip it
             if getattr(route.endpoint, "diracx_open_access", False):
