@@ -2,15 +2,45 @@ from __future__ import annotations
 
 import inspect
 from collections import defaultdict
+from collections.abc import Iterator
 from typing import TYPE_CHECKING
+
+from fastapi.routing import APIRoute
 
 from diracx.core.extensions import DiracEntryPoint, select_from_extension
 from diracx.routers.access_policies import (
     BaseAccessPolicy,
 )
 
+try:
+    # FastAPI >= 0.137 nests the routes of the routers added with
+    # include_router() behind _IncludedRouter objects
+    from fastapi.routing import _IncludedRouter
+except ImportError:
+    # Placeholder which never matches any route for older FastAPI versions
+    class _IncludedRouter:  # type: ignore[no-redef]
+        pass
+
+
 if TYPE_CHECKING:
     from diracx.routers.fastapi_classes import DiracxRouter
+
+
+def iter_auth_required_routes(router: DiracxRouter) -> Iterator[APIRoute]:
+    """Yield the API routes of a router, recursively descending into
+    the routers added with include_router().
+
+    Routers created with "require_auth=False" are skipped, as well as
+    the routers they include.
+    """
+    if not router.diracx_require_auth:
+        return
+
+    for route in router.routes:
+        if isinstance(route, _IncludedRouter):
+            yield from iter_auth_required_routes(route.original_router)
+        elif isinstance(route, APIRoute):
+            yield route
 
 
 def test_all_routes_have_policy():
